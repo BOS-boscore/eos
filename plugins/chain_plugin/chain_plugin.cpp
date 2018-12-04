@@ -1498,7 +1498,7 @@ void read_write::push_block(const read_write::push_block_params& params, next_fu
 void read_write::push_transaction(const read_write::push_transaction_params& params, next_function<read_write::push_transaction_results> next) {
 
    try {
-      boost::mutex::scoped_lock lk(trasaction_ioMutex);
+      boost::mutex::scoped_lock lk(transaction_ioMutex);
       auto pretty_input = std::make_shared<packed_transaction>();
       auto resolver = make_resolver(this, abi_serializer_max_time);
       try {
@@ -1532,7 +1532,7 @@ void read_write::push_transaction(const read_write::push_transaction_params& par
 }
 
 static void push_recurse(read_write* rw, int index, const std::shared_ptr<read_write::push_transactions_params>& params, const std::shared_ptr<read_write::push_transactions_results>& results, const next_function<read_write::push_transactions_results>& next) {
-   boost::mutex::scoped_lock lk(trasactions_ioMutex);
+   boost::mutex::scoped_lock lk(transactions_ioMutex);
    auto wrapped_next = [=](const fc::static_variant<fc::exception_ptr, read_write::push_transaction_results>& result) {
       if (result.contains<fc::exception_ptr>()) {
          const auto& e = result.get<fc::exception_ptr>();
