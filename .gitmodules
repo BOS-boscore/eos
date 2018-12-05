@@ -4,7 +4,7 @@
         ignore = dirty
 [submodule "libraries/appbase"]
 	path = libraries/appbase
-url=https://github.com/BOS-boscore/appbase
+url=https://github.com/EOSIO/appbase
         ignore = dirty
 [submodule "contracts/musl/upstream"]
 	path = contracts/musl/upstream
