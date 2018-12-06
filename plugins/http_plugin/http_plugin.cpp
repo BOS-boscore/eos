@@ -308,7 +308,7 @@ namespace eosio {
          void create_server_for_endpoint(const tcp::endpoint& ep, websocketpp::server<detail::asio_with_stub_log<T>>& ws) {
             try {
                ws.clear_access_channels(websocketpp::log::alevel::all);
-               ws.init_asio(&app().get_io_service());
+               ws.init_asio(&app().get_basic_io_service());
                ws.set_reuse_addr(true);
                ws.set_max_http_body_size(max_body_size);
                ws.set_http_handler([&](connection_hdl hdl) {
