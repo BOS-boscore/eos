@@ -112,7 +112,10 @@ int main(int argc, char** argv)
       ilog("nodeos using configuration file ${c}", ("c", app().full_config_file_path().string()));
       ilog("nodeos data directory is ${d}", ("d", app().data_dir().string()));
       app().startup();
-      app().exec();
+      size_t num_threads = std::thread::hardware_concurrency()-2;
+      if(num_threads < 1)
+         num_threads = 1;
+      app().exec(num_threads);
    } catch( const extract_genesis_state_exception& e ) {
       return EXTRACTED_GENESIS;
    } catch( const fixed_reversible_db_exception& e ) {

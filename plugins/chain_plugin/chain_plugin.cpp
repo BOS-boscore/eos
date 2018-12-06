@@ -120,6 +120,7 @@ using vm_type = wasm_interface::vm_type;
 using fc::flat_map;
 
 using boost::signals2::scoped_connection;
+boost::mutex transaction_ioMutex,transactions_ioMutex,block_ioMutex;
 
 //using txn_msg_rate_limits = controller::txn_msg_rate_limits;
 
@@ -1487,6 +1488,7 @@ fc::variant read_only::get_block_header_state(const get_block_header_state_param
 
 void read_write::push_block(const read_write::push_block_params& params, next_function<read_write::push_block_results> next) {
    try {
+      boost::mutex::scoped_lock lk(block_ioMutex);
       app().get_method<incoming::methods::block_sync>()(std::make_shared<signed_block>(params));
       next(read_write::push_block_results{});
    } catch ( boost::interprocess::bad_alloc& ) {
@@ -1497,6 +1499,7 @@ void read_write::push_block(const read_write::push_block_params& params, next_fu
 void read_write::push_transaction(const read_write::push_transaction_params& params, next_function<read_write::push_transaction_results> next) {
 
    try {
+      boost::mutex::scoped_lock lk(transaction_ioMutex);
       auto pretty_input = std::make_shared<packed_transaction>();
       auto resolver = make_resolver(this, abi_serializer_max_time);
       try {
@@ -1552,6 +1555,7 @@ static void push_recurse(read_write* rw, int index, const std::shared_ptr<read_w
 
 void read_write::push_transactions(const read_write::push_transactions_params& params, next_function<read_write::push_transactions_results> next) {
    try {
+      boost::mutex::scoped_lock lk(transactions_ioMutex);
       EOS_ASSERT( params.size() <= 1000, too_many_tx_at_once, "Attempt to push too many transactions at once" );
       auto params_copy = std::make_shared<read_write::push_transactions_params>(params.begin(), params.end());
       auto result = std::make_shared<read_write::push_transactions_results>();
