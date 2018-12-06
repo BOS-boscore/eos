@@ -4,8 +4,9 @@
         ignore = dirty
 [submodule "libraries/appbase"]
 	path = libraries/appbase
-url=https://github.com/EOSIO/appbase
+url=https://github.com/BOS-boscore/appbase
         ignore = dirty
+        branch = multithreadingsupport
 [submodule "contracts/musl/upstream"]
 	path = contracts/musl/upstream
 	url = https://github.com/EOSIO/musl.git
