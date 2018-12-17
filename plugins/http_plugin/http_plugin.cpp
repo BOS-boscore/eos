@@ -411,7 +411,7 @@ namespace eosio {
             my->valid_hosts.insert(aliases.begin(), aliases.end());
          }
 
-         tcp::resolver resolver( app().get_io_service());
+         tcp::resolver resolver( app().get_basic_io_service());
          if( options.count( my->http_server_address_option_name ) && options.at( my->http_server_address_option_name ).as<string>().length()) {
             string lipstr = options.at( my->http_server_address_option_name ).as<string>();
             string host = lipstr.substr( 0, lipstr.find( ':' ));
@@ -501,7 +501,7 @@ namespace eosio {
       if(my->unix_endpoint) {
          try {
             my->unix_server.clear_access_channels(websocketpp::log::alevel::all);
-            my->unix_server.init_asio(&app().get_io_service());
+            my->unix_server.init_asio(&app().get_basic_io_service());
             my->unix_server.set_max_http_body_size(my->max_body_size);
             my->unix_server.listen(*my->unix_endpoint);
             my->unix_server.set_http_handler([&](connection_hdl hdl) {
@@ -552,7 +552,7 @@ namespace eosio {
 
    void http_plugin::add_handler(const string& url, const url_handler& handler) {
       ilog( "add api url: ${c}", ("c",url) );
-      app().get_io_service().post([=](){
+      app().get_basic_io_service().post([=](){
         my->url_handlers.insert(std::make_pair(url,handler));
       });
    }
