@@ -1783,6 +1783,23 @@ signed_block_ptr controller::fetch_block_by_number( uint32_t block_num )const  {
    return my->blog.read_block_by_num(block_num);
 } FC_CAPTURE_AND_RETHROW( (block_num) ) }
 
+signed_block_ptr controller::http_fetch_block_by_id( block_id_type id )const {
+   auto state = my->fork_db.get_block(id);
+   if( state && state->block ) return state->block;
+   auto bptr = http_fetch_block_by_number( block_header::num_from_id(id) );
+   if( bptr && bptr->id() == id ) return bptr;
+   return signed_block_ptr();
+}
+
+signed_block_ptr controller::http_fetch_block_by_number( uint32_t block_num )const  { try {
+   auto blk_state = my->fork_db.get_block_in_current_chain_by_num( block_num );
+   if( blk_state && blk_state->block ) {
+      return blk_state->block;
+   }
+
+   return my->blog.http_read_block_by_num(block_num);
+} FC_CAPTURE_AND_RETHROW( (block_num) ) }
+
 block_state_ptr controller::fetch_block_state_by_id( block_id_type id )const {
    auto state = my->fork_db.get_block(id);
    return state;

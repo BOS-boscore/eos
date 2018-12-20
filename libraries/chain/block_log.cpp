@@ -6,6 +6,7 @@
 #include <eosio/chain/exceptions.hpp>
 #include <fstream>
 #include <fc/io/raw.hpp>
+#include <atomic>
 
 #define LOG_READ  (std::ios::in | std::ios::binary)
 #define LOG_WRITE (std::ios::out | std::ios::binary | std::ios::app)
@@ -21,7 +22,7 @@ namespace eosio { namespace chain {
     *            this is in the form of an first_block_num that is written immediately after the version
     */
    const uint32_t block_log::max_supported_version = 2;
-
+   std::mutex b_lock,i_lock;
    namespace detail {
       class block_log_impl {
          public:
@@ -29,58 +30,47 @@ namespace eosio { namespace chain {
             block_id_type            head_id;
             std::fstream             block_stream;
             std::fstream             index_stream;
+            vector<std::shared_ptr<std::fstream>>     http_block_streams;
+            vector<std::shared_ptr<std::fstream>>     http_index_streams;
             fc::path                 block_file;
             fc::path                 index_file;
-            bool                     block_write;
-            bool                     index_write;
+            std::atomic<bool>        block_write;
+            std::atomic<bool>        index_write;
+            int                      safe_offset=0;
+            int        safe_index=0;
             bool                     genesis_written_to_block_log = false;
             uint32_t                 version = 0;
             uint32_t                 first_block_num = 0;
+            block_log_impl(){
+size_t num_threads = std::thread::hardware_concurrency()-2;
+      if(num_threads < 1)
+         num_threads = 1;
+         for(int i=0;i<num_threads;i++){
+            http_block_streams.push_back(std::make_shared<std::fstream>());
+            http_index_streams.push_back(std::make_shared<std::fstream>());
+         }
+            
 
-            inline void check_block_read() {
-               if (block_write) {
-                  block_stream.close();
-                  block_stream.open(block_file.generic_string().c_str(), LOG_READ);
-                  block_write = false;
-               }
-            }
+            };
 
-            inline void check_block_write() {
-               if (!block_write) {
-                  block_stream.close();
-                  block_stream.open(block_file.generic_string().c_str(), LOG_WRITE);
-                  block_write = true;
-               }
-            }
-
-            inline void check_index_read() {
-               try {
-                  if (index_write) {
-                     index_stream.close();
-                     index_stream.open(index_file.generic_string().c_str(), LOG_READ);
-                     index_write = false;
-                  }
-               }
-               FC_LOG_AND_RETHROW()
-            }
-
-            inline void check_index_write() {
-               if (!index_write) {
-                  index_stream.close();
-                  index_stream.open(index_file.generic_string().c_str(), LOG_WRITE);
-                  index_write = true;
+            inline void check_block_read_write(std::atomic<bool> &my_write,std::fstream &my_stream,fc::path mypath,bool read_write,unsigned int flag) {
+               if (my_write^read_write) {
+                  my_stream.close();
+                  my_stream.open(mypath.generic_string().c_str(), flag);
+                  my_write = read_write;
                }
             }
       };
    }
 
+   
    block_log::block_log(const fc::path& data_dir)
    :my(new detail::block_log_impl()) {
       my->block_stream.exceptions(std::fstream::failbit | std::fstream::badbit);
       my->index_stream.exceptions(std::fstream::failbit | std::fstream::badbit);
-      open(data_dir);
+         open(data_dir);
    }
-
+   
    block_log::block_log(block_log&& other) {
       my = std::move(other.my);
    }
@@ -91,7 +81,26 @@ namespace eosio { namespace chain {
          my.reset();
       }
    }
-
+   std::shared_ptr<std::fstream> block_log::get_block_stream_pointer()const{
+      b_lock.lock();
+      if(my->http_block_streams.size()<=my->safe_offset){
+         my->safe_offset=0;
+      }
+      std::shared_ptr<std::fstream> fs= my->http_block_streams[my->safe_offset];
+      my->safe_offset++;
+      b_lock.unlock();
+      return fs;
+   }
+   std::shared_ptr<std::fstream> block_log::get_index_stream_pointer()const{
+      i_lock.lock();
+      if(my->http_index_streams.size()<=my->safe_index){
+         my->safe_index=0;
+      }
+      std::shared_ptr<std::fstream>fs= my->http_index_streams[my->safe_index];
+     my->safe_index++;
+      i_lock.unlock();
+      return fs;
+   }
    void block_log::open(const fc::path& data_dir) {
       if (my->block_stream.is_open())
          my->block_stream.close();
@@ -108,7 +117,14 @@ namespace eosio { namespace chain {
       my->index_stream.open(my->index_file.generic_string().c_str(), LOG_WRITE);
       my->block_write = true;
       my->index_write = true;
-
+      for(int i=0;i<my->http_index_streams.size();i++){
+         std::shared_ptr<std::fstream> fs=my->http_index_streams[i];
+         fs->open(my->index_file.generic_string().c_str(), LOG_READ);
+      }
+      for(int i=0;i<my->http_block_streams.size();i++){
+         std::shared_ptr<std::fstream> fs=my->http_block_streams[i];
+         fs->open(my->block_file.generic_string().c_str(), LOG_READ);
+      }
       /* On startup of the block log, there are several states the log file and the index file can be
        * in relation to each other.
        *
@@ -132,7 +148,7 @@ namespace eosio { namespace chain {
 
       if (log_size) {
          ilog("Log is nonempty");
-         my->check_block_read();
+         my->check_block_read_write(my->block_write,my->block_stream,my->block_file,false,LOG_READ);;
          my->block_stream.seekg( 0 );
          my->version = 0;
          my->block_stream.read( (char*)&my->version, sizeof(my->version) );
@@ -155,8 +171,8 @@ namespace eosio { namespace chain {
          my->head_id = my->head->id();
 
          if (index_size) {
-            my->check_block_read();
-            my->check_index_read();
+            my->check_block_read_write(my->block_write,my->block_stream,my->block_file,true,LOG_READ);
+            my->check_block_read_write(my->index_write,my->index_stream,my->index_file,true,LOG_READ);
 
             ilog("Index is nonempty");
             uint64_t block_pos;
@@ -191,8 +207,8 @@ namespace eosio { namespace chain {
       try {
          EOS_ASSERT( my->genesis_written_to_block_log, block_log_append_fail, "Cannot append to block log until the genesis is first written" );
 
-         my->check_block_write();
-         my->check_index_write();
+         my->check_block_read_write(my->block_write,my->block_stream,my->block_file,true,LOG_WRITE);
+         my->check_block_read_write(my->index_write,my->index_stream,my->index_file,true,LOG_WRITE);
 
          uint64_t pos = my->block_stream.tellp();
          EOS_ASSERT(my->index_stream.tellp() == sizeof(uint64_t) * (b->block_num() - my->first_block_num),
@@ -218,6 +234,50 @@ namespace eosio { namespace chain {
       my->block_stream.flush();
       my->index_stream.flush();
    }
+
+
+////////////////////
+
+
+std::pair<signed_block_ptr, uint64_t> block_log::http_read_block(uint64_t pos)const {
+      std::shared_ptr<std::fstream> bs=get_block_stream_pointer();
+      bs->seekg(pos);
+      std::pair<signed_block_ptr,uint64_t> result;
+      result.first = std::make_shared<signed_block>();
+      fc::raw::unpack(*bs, *result.first);
+      result.second = uint64_t(bs->tellg()) + 8;
+      return result;
+   }
+
+   signed_block_ptr block_log::http_read_block_by_num(uint32_t block_num)const {
+      try {
+         signed_block_ptr b;
+         uint64_t pos = http_get_block_pos(block_num);
+         if (pos != npos) {
+            b = http_read_block(pos).first;
+            EOS_ASSERT(b->block_num() == block_num, reversible_blocks_exception,
+                      "Wrong block was read from block log.", ("returned", b->block_num())("expected", block_num));
+         }
+         return b;
+      } FC_LOG_AND_RETHROW()
+   }
+
+   uint64_t block_log::http_get_block_pos(uint32_t block_num) const {
+      std::shared_ptr<std::fstream> ibs=get_index_stream_pointer();
+      if (!(my->head && block_num <= block_header::num_from_id(my->head_id) && block_num >= my->first_block_num))
+         return npos;
+      ibs->seekg(sizeof(uint64_t) * (block_num - my->first_block_num));
+      
+      uint64_t pos;
+      ibs->read((char*)&pos, sizeof(pos));
+      return pos;
+   }
+
+
+
+
+//////////////////////
+
 
    void block_log::reset( const genesis_state& gs, const signed_block_ptr& first_block, uint32_t first_block_num ) {
       if (my->block_stream.is_open())
@@ -262,11 +322,22 @@ namespace eosio { namespace chain {
       flush();
 
       my->block_write = false;
-      my->check_block_write(); // Reset to append-only writing.
+      my->check_block_read_write(my->block_write,my->block_stream,my->block_file,true,LOG_WRITE); // Reset to append-only writing.
+
+     for(int i=0;i<my->http_index_streams.size();i++){
+         std::shared_ptr<std::fstream> fs=my->http_index_streams[i];
+         fs->close();
+         fs->open(my->index_file.generic_string().c_str(), LOG_READ);
+      }
+      for(int i=0;i<my->http_block_streams.size();i++){
+         std::shared_ptr<std::fstream> fs=my->http_block_streams[i];
+         fs->close();
+         fs->open(my->block_file.generic_string().c_str(), LOG_READ);
+      }
    }
 
    std::pair<signed_block_ptr, uint64_t> block_log::read_block(uint64_t pos)const {
-      my->check_block_read();
+      my->check_block_read_write(my->block_write,my->block_stream,my->block_file,false,LOG_READ);
 
       my->block_stream.seekg(pos);
       std::pair<signed_block_ptr,uint64_t> result;
@@ -290,7 +361,7 @@ namespace eosio { namespace chain {
    }
 
    uint64_t block_log::get_block_pos(uint32_t block_num) const {
-      my->check_index_read();
+      my->check_block_read_write(my->index_write,my->index_stream,my->index_file,false,LOG_READ);
       if (!(my->head && block_num <= block_header::num_from_id(my->head_id) && block_num >= my->first_block_num))
          return npos;
       my->index_stream.seekg(sizeof(uint64_t) * (block_num - my->first_block_num));
@@ -300,7 +371,7 @@ namespace eosio { namespace chain {
    }
 
    signed_block_ptr block_log::read_head()const {
-      my->check_block_read();
+      my->check_block_read_write(my->block_write,my->block_stream,my->block_file,false,LOG_READ);;
 
       uint64_t pos;
 
@@ -334,7 +405,7 @@ namespace eosio { namespace chain {
       my->index_write = true;
 
       uint64_t end_pos;
-      my->check_block_read();
+      my->check_block_read_write(my->block_write,my->block_stream,my->block_file,false,LOG_READ);
 
       my->block_stream.seekg(-sizeof( uint64_t), std::ios::end);
       my->block_stream.read((char*)&end_pos, sizeof(end_pos));

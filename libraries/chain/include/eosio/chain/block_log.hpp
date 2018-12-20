@@ -6,11 +6,12 @@
 #include <fc/filesystem.hpp>
 #include <eosio/chain/block.hpp>
 #include <eosio/chain/genesis_state.hpp>
+#include<thread>
 
 namespace eosio { namespace chain {
 
    namespace detail { class block_log_impl; }
-
+   
    /* The block log is an external append only log of the blocks with a header. Blocks should only
     * be written to the log after they irreverisble as the log is append only. The log is a doubly
     * linked list of blocks. There is a secondary index file of only block positions that enables
@@ -52,10 +53,20 @@ namespace eosio { namespace chain {
             return read_block_by_num(block_header::num_from_id(id));
          }
 
+
+
+std::pair<signed_block_ptr, uint64_t> http_read_block(uint64_t file_pos)const;
+         signed_block_ptr http_read_block_by_num(uint32_t block_num)const;
+         signed_block_ptr http_read_block_by_id(const block_id_type& id)const {
+            return http_read_block_by_num(block_header::num_from_id(id));
+         }
+
+
          /**
           * Return offset of block in file, or block_log::npos if it does not exist.
           */
          uint64_t get_block_pos(uint32_t block_num) const;
+         uint64_t http_get_block_pos(uint32_t block_num) const;
          signed_block_ptr        read_head()const;
          const signed_block_ptr& head()const;
          uint32_t                first_block_num() const;
@@ -72,6 +83,8 @@ namespace eosio { namespace chain {
       private:
          void open(const fc::path& data_dir);
          void construct_index();
+         std::shared_ptr<std::fstream>get_block_stream_pointer() const;
+         std::shared_ptr<std::fstream> get_index_stream_pointer() const;
 
          std::unique_ptr<detail::block_log_impl> my;
    };
