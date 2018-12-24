@@ -32,10 +32,14 @@ namespace eosio { namespace chain {
             std::fstream             index_stream;
             vector<std::shared_ptr<std::fstream>>     http_block_streams;
             vector<std::shared_ptr<std::fstream>>     http_index_streams;
+            vector<int>     http_index_streams_flag;
+            vector<int>     http_block_streams_flag;
             fc::path                 block_file;
             fc::path                 index_file;
             std::atomic<bool>        block_write;
             std::atomic<bool>        index_write;
+            std::atomic<int>        index_flag;
+            std::atomic<int>        block_flag;
             bool                     genesis_written_to_block_log = false;
             uint32_t                 version = 0;
             uint32_t                 first_block_num = 0;
@@ -46,9 +50,11 @@ size_t num_threads = std::thread::hardware_concurrency()*2+2;
          for(int i=0;i<num_threads;i++){
             http_block_streams.push_back(std::make_shared<std::fstream>());
             http_index_streams.push_back(std::make_shared<std::fstream>());
+            http_index_streams_flag.push_back(0);
+            http_block_streams_flag.push_back(0);
          }
-            
-
+         index_flag=0;
+         block_flag=0;
             };
 
             inline void check_block_read_write(std::atomic<bool> &my_write,std::fstream &my_stream,fc::path mypath,bool read_write,unsigned int flag) {
@@ -56,6 +62,17 @@ size_t num_threads = std::thread::hardware_concurrency()*2+2;
                   my_stream.close();
                   my_stream.open(mypath.generic_string().c_str(), flag);
                   my_write = read_write;
+                  if(read_write){
+                     if(mypath==index_file){
+                        index_flag++;
+                        index_flag=index_flag%INT_MAX;
+                     }else{
+                        block_flag++;
+                        block_flag=block_flag%INT_MAX;
+
+                     }
+
+                  }
                }
             }
       };
@@ -79,41 +96,49 @@ size_t num_threads = std::thread::hardware_concurrency()*2+2;
          my.reset();
       }
    }
-   std::shared_ptr<std::fstream> block_log::get_block_stream_pointer()const{
+   std::pair<std::shared_ptr<std::fstream>,int> block_log::get_block_stream_pointer()const{
       b_lock.lock();
-      auto tp=my->http_block_streams.size();
+      std::pair<std::shared_ptr<std::fstream>,int> result;
       std::shared_ptr<std::fstream> fs= my->http_block_streams[0];
       my->http_block_streams.erase(my->http_block_streams.begin());
-      auto tp1=my->http_block_streams.size();
-      b_lock.unlock();
-      return fs;
-   }
-   std::shared_ptr<std::fstream> block_log::get_index_stream_pointer()const{
-      i_lock.lock();
-      auto tp=my->http_index_streams.size();
-      std::shared_ptr<std::fstream>fs= my->http_index_streams[0];
-      my->http_index_streams.erase(my->http_index_streams.begin());
-      auto tp1=my->http_index_streams.size();
-      i_lock.unlock();
-      return fs;
-   }
- void block_log::add_index_stream_pointer(std::shared_ptr<std::fstream>fs)const{
-      i_lock.lock();
-      auto tp=my->http_index_streams.size();
-      fs->close();
-      fs->open(my->index_file.generic_string().c_str(), LOG_READ);
-      my->http_index_streams.push_back(fs);
-      auto tp1=my->http_index_streams.size();
-      i_lock.unlock();
-   }
-    void block_log::add_block_stream_pointer(std::shared_ptr<std::fstream>fs)const{
-      i_lock.lock();
-      auto tp=my->http_block_streams.size();
+      int write_flag=my->http_block_streams_flag[0];
+      if(write_flag!=my->block_flag){
       fs->close();
       fs->open(my->block_file.generic_string().c_str(), LOG_READ);
-      my->http_block_streams.push_back(fs);
-      auto tp1=my->http_block_streams.size();
+      }
+      my->http_block_streams_flag.erase(my->http_block_streams_flag.begin());
+      result.first=fs;
+      result.second=write_flag;
+      b_lock.unlock();
+      return result;
+   }
+   std::pair<std::shared_ptr<std::fstream>,int> block_log::get_index_stream_pointer()const{
+      i_lock.lock();
+      std::pair<std::shared_ptr<std::fstream>,int> result;
+      std::shared_ptr<std::fstream>fs= my->http_index_streams[0];
+      my->http_index_streams.erase(my->http_index_streams.begin());
+      int write_flag=my->http_index_streams_flag[0];
+      if(write_flag!=my->index_flag){
+      fs->close();
+      fs->open(my->index_file.generic_string().c_str(), LOG_READ);
+      }
+      my->http_index_streams_flag.erase(my->http_index_streams_flag.begin());
+      result.first=fs;
+      result.second=write_flag;
       i_lock.unlock();
+      return result;
+   }
+ void block_log::add_index_stream_pointer(std::pair<std::shared_ptr<std::fstream>,int>fs)const{
+      i_lock.lock();
+      my->http_index_streams.push_back(fs.first);
+      my->http_index_streams_flag.push_back(fs.second);
+      i_lock.unlock();
+   }
+    void block_log::add_block_stream_pointer(std::pair<std::shared_ptr<std::fstream>,int>fs)const{
+      b_lock.lock();
+      my->http_block_streams.push_back(fs.first);
+      my->http_block_streams_flag.push_back(fs.second);
+      b_lock.unlock();
    }
 
    void block_log::open(const fc::path& data_dir) {
@@ -255,12 +280,12 @@ size_t num_threads = std::thread::hardware_concurrency()*2+2;
 
 
 std::pair<signed_block_ptr, uint64_t> block_log::http_read_block(uint64_t pos)const {
-      std::shared_ptr<std::fstream> bs=get_block_stream_pointer();
-      bs->seekg(pos);
+      std::pair<std::shared_ptr<std::fstream>,int> bs=get_block_stream_pointer();
+      bs.first->seekg(pos);
       std::pair<signed_block_ptr,uint64_t> result;
       result.first = std::make_shared<signed_block>();
-      fc::raw::unpack(*bs, *result.first);
-      result.second = uint64_t(bs->tellg()) + 8;
+      fc::raw::unpack(*bs.first, *result.first);
+      result.second = uint64_t(bs.first->tellg()) + 8;
       add_block_stream_pointer(bs);
       return result;
    }
@@ -281,11 +306,11 @@ std::pair<signed_block_ptr, uint64_t> block_log::http_read_block(uint64_t pos)co
    uint64_t block_log::http_get_block_pos(uint32_t block_num) const {
       if (!(my->head && block_num <= block_header::num_from_id(my->head_id) && block_num >= my->first_block_num))
          return npos;
-      std::shared_ptr<std::fstream> ibs=get_index_stream_pointer();
-      ibs->seekg(sizeof(uint64_t) * (block_num - my->first_block_num));
+      std::pair<std::shared_ptr<std::fstream>,int> ibs=get_index_stream_pointer();
+      ibs.first->seekg(sizeof(uint64_t) * (block_num - my->first_block_num));
       
       uint64_t pos;
-      ibs->read((char*)&pos, sizeof(pos));
+      ibs.first->read((char*)&pos, sizeof(pos));
       add_index_stream_pointer(ibs);
       return pos;
    }

@@ -83,10 +83,10 @@ std::pair<signed_block_ptr, uint64_t> http_read_block(uint64_t file_pos)const;
       private:
          void open(const fc::path& data_dir);
          void construct_index();
-         std::shared_ptr<std::fstream>get_block_stream_pointer() const;
-         std::shared_ptr<std::fstream> get_index_stream_pointer() const;
-         void add_index_stream_pointer(std::shared_ptr<std::fstream>fs)const;
-         void add_block_stream_pointer(std::shared_ptr<std::fstream>fs)const;
+         std::pair<std::shared_ptr<std::fstream>,int>get_block_stream_pointer() const;
+         std::pair<std::shared_ptr<std::fstream>,int> get_index_stream_pointer() const;
+         void add_index_stream_pointer(std::pair<std::shared_ptr<std::fstream>,int>fs)const;
+         void add_block_stream_pointer(std::pair<std::shared_ptr<std::fstream>,int>fs)const;
          std::unique_ptr<detail::block_log_impl> my;
    };
 
